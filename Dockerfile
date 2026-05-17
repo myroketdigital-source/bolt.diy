@@ -13,7 +13,7 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 RUN apt-get update && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
 
-# Accept (optional) build-time public URL for Remix/Vite (Coolify can pass it)
+# Accept optional build-time public URL for Remix/Vite
 ARG VITE_PUBLIC_APP_URL
 ENV VITE_PUBLIC_APP_URL=${VITE_PUBLIC_APP_URL}
 
@@ -23,11 +23,13 @@ RUN pnpm fetch
 
 # Copy source and build
 COPY . .
-# install with dev deps (needed to build)
+
+# Install with dev deps because build needs Vite/Remix/TypeScript/Wrangler tooling
 RUN pnpm install --offline --frozen-lockfile
 
-# Build the Remix app (SSR + client)
+# Build the Remix app
 RUN NODE_OPTIONS=--max-old-space-size=4096 pnpm run build
+
 
 # ---- production dependencies stage ----
 FROM build AS prod-deps
@@ -48,18 +50,20 @@ ENV HOST=0.0.0.0
 ARG VITE_LOG_LEVEL=debug
 ARG DEFAULT_NUM_CTX
 
-# Set non-sensitive environment variables
+# Runtime env
 ENV WRANGLER_SEND_METRICS=false \
     VITE_LOG_LEVEL=${VITE_LOG_LEVEL} \
     DEFAULT_NUM_CTX=${DEFAULT_NUM_CTX} \
     RUNNING_IN_DOCKER=true
 
-# Note: API keys should be provided at runtime via docker run -e or docker-compose
-# Example: docker run -e OPENAI_API_KEY=your_key_here ...
-
-# Install curl for healthchecks and copy bindings script
+# Install curl for healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
+
+# IMPORTANT FIX:
+# dockerstart uses "wrangler pages dev", but wrangler is normally removed by pnpm prune --prod.
+# Install wrangler globally into the production image.
+RUN pnpm add -g wrangler@4.44.0
 
 # Copy built files and scripts
 COPY --from=prod-deps /app/build /app/build
@@ -76,8 +80,8 @@ RUN chmod +x /app/bindings.sh
 
 EXPOSE 5173
 
-# Healthcheck for deployment platforms
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
+# Healthcheck for Coolify/deployment platforms
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
   CMD curl -fsS http://localhost:5173/ || exit 1
 
 # Start using dockerstart script with Wrangler
@@ -86,18 +90,19 @@ CMD ["pnpm", "run", "dockerstart"]
 
 # ---- development stage ----
 FROM build AS development
+WORKDIR /app
 
 # Non-sensitive development arguments
 ARG VITE_LOG_LEVEL=debug
 ARG DEFAULT_NUM_CTX
 
-# Set non-sensitive environment variables for development
+# Development env
 ENV VITE_LOG_LEVEL=${VITE_LOG_LEVEL} \
     DEFAULT_NUM_CTX=${DEFAULT_NUM_CTX} \
     RUNNING_IN_DOCKER=true
 
-# Note: API keys should be provided at runtime via docker run -e or docker-compose
-# Example: docker run -e OPENAI_API_KEY=your_key_here ...
-
 RUN mkdir -p /app/run
-CMD ["pnpm", "run", "dev", "--host"]
+
+EXPOSE 5173
+
+CMD ["pnpm", "run", "dev", "--host", "0.0.0.0"]
