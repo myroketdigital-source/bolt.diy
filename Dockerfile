@@ -62,8 +62,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 
 # IMPORTANT FIX:
 # dockerstart uses "wrangler pages dev", but wrangler is normally removed by pnpm prune --prod.
-# Install wrangler globally into the production image.
-RUN pnpm add -g wrangler@4.44.0
+# Use npm global install because pnpm global install needs PNPM_HOME/global-bin setup.
+RUN npm install -g wrangler@4.44.0
 
 # Copy built files and scripts
 COPY --from=prod-deps /app/build /app/build
